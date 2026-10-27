@@ -1,0 +1,37 @@
+services:
+  dbhub:
+    build:
+      context: .
+      dockerfile: Dockerfile.dbhub
+    image: dbhub-local:1.4.0
+    init: true
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      TRANSPORT: http
+      PORT: "8080"
+      DBHUB_HOST: 0.0.0.0
+    command: ["--transport=http", "--config=/app/dbhub.toml"]
+    ports:
+      - "127.0.0.1:${DBHUB_DOCKER_PORT:-18080}:8080"
+    volumes:
+      - type: bind
+        source: ./.env
+        target: /app/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./dbhub.docker.toml
+        target: /app/dbhub.toml
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
