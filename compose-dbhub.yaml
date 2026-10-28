@@ -3,9 +3,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dbhub
-    image: dbhub-local:1.4.0
+    image: dbhub-local:1.5.0
     init: true
     restart: unless-stopped
+    # Secrets and optional settings (DBHUB_MYSQL_PASSWORD, DBHUB_AUTH_TOKEN,
+    # DBHUB_ALLOWED_HOSTS) come from the mounted .env below; do not put READONLY
+    # or MAX_ROWS there (unsupported, DBHub exits). The database source is defined
+    # in dbhub.docker.toml (use host.docker.internal for databases on the host).
     environment:
       NODE_ENV: production
       TRANSPORT: http

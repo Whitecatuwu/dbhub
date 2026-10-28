@@ -44,7 +44,8 @@ ChatGPT 的自訂 MCP 連接器是在 **OpenAI 的雲端**連線，而不是在�
 
 | 情境 | 建議做法 |
 |---|---|
-| 同事想用 AI 查資料，但只有 ChatGPT 免費版 | 改用 **Claude Desktop**，並安裝本專案的 **MCP Bundle**（`mcpb/`），在本機執行，不需要公開網路。 |
+| 多位同事只用 ChatGPT（個人帳號或同一工作區） | 見[第六節](#六多人使用的三個方案)。 |
+| 同事願意改用其他 AI 工具 | 改用 **Claude Desktop**，並安裝本專案的 **MCP Bundle**（`mcpb/`），在本機執行，不需要公開網路。 |
 | 只想看資料表或跑查詢，不需要 AI | 使用 DBHub 內建的 **Workbench 網頁介面**（預設 `http://localhost:18080`）。 |
 | 開發者本人使用 | 使用 Claude Code 搭配 stdio 或本機 HTTP 端點（見 [使用說明與介紹.md](使用說明與介紹.md)）。 |
 
@@ -72,7 +73,7 @@ ChatGPT 的自訂 MCP 連接器是在 **OpenAI 的雲端**連線，而不是在�
 2. **設定 DBHub 為 stdio 的 MCP 伺服器**，由 tunnel-client 啟動。例如用 `dbhub.toml`：
 
    ```bash
-   tunnel-client init --sample sample_mcp_stdio_local --profile dbhub --tunnel-id tunnel_你的ID --mcp-command "npx -y @bytebase/dbhub@latest --config ./dbhub.toml"
+   tunnel-client init --sample sample_mcp_stdio_local --profile dbhub --tunnel-id tunnel_你的ID --mcp-command "npx -y @bytebase/dbhub@1.5.0 --config ./dbhub.toml"
    ```
 
 3. **設定 API key 環境變數**（以 PowerShell 為例）：
@@ -104,7 +105,67 @@ ChatGPT 的自訂 MCP 連接器是在 **OpenAI 的雲端**連線，而不是在�
 - **權限仍然重要**：隧道只是保護網路路徑，ChatGPT 能呼叫的工具仍然會執行 SQL。因此仍須使用唯讀帳號，並在 TOML 中設定 `readonly = true`、`max_rows`。能使用此連接器的人都能查詢資料，請只授權需要的人。
 - 以上指令取自官方 README，`--mcp-command` 的格式與 Windows 路徑寫法請以 `tunnel-client help quickstart` 的輸出為準。
 
-## 六、其他方式：公開 HTTPS 端點（不建議）
+### 改指向已在執行的 HTTP 端點（Docker 常駐 DBHub）
+
+上面是由 `tunnel-client` 用 stdio 啟動 DBHub。若 DBHub 已由 `compose-dbhub.yaml` 常駐在同一台主機，可以讓 `tunnel-client` 改連 HTTP 端點。依官方 README，用 `--mcp.server-url`：
+
+```powershell
+$env:CONTROL_PLANE_API_KEY = "sk-..."
+tunnel-client run --control-plane.tunnel-id tunnel_你的ID --mcp.server-url http://127.0.0.1:18080/mcp
+```
+
+- 先用 `curl http://127.0.0.1:18080/healthz` 確認 DBHub 正常。
+- README 的範例網址是 `https://`，**未明說 `http://127.0.0.1` 是否可用**，請以 `doctor` 與 `run` 的輸出實測。
+- README **未提到會轉送自訂的 `Authorization` 標頭**。這個架構建議先不要設定 `DBHUB_AUTH_TOKEN`，否則請求可能被擋成 401；保護靠「DBHub 只綁本機＋私有隧道＋只讀資料庫帳號」。
+- DBHub 若比 `tunnel-client` 晚啟動，可設 `mcp.startup_wait_timeout`（例如 `2m`）。
+- README 沒有說明 Windows 長期常駐的做法；`tunnel-client` 要自己用作業系統的服務管理確保開機自動啟動。
+- 本專案的 Compose 會掛載 `dbhub.docker.toml`（容器內的 `/app/dbhub.toml`），其中資料庫主機要用 `host.docker.internal`，而不是 `127.0.0.1`。
+
+## 六、多人使用的三個方案
+
+同事只使用 ChatGPT、不會用 Claude Code 或 Claude Desktop 時，不能用 stdio（ChatGPT 無法啟動本機程式），DBHub 必須以 HTTP 常駐。`tunnel-client` 與隧道屬於 **OpenAI 平台組織**，不是個人 ChatGPT 帳號，因此要先看同事是在同一個組織，還是各自使用個人帳號。
+
+| 方案 | 適用 | 同事需要做的事 |
+|---|---|---|
+| 1. ChatGPT Business 工作區 ＋ 一條隧道 | 公司願意購買，資料敏感度較高 | 在自己的 ChatGPT 加入同一個連接器 |
+| 2. 公開 HTTPS 端點 ＋ Token | 不能購買 Business，資料敏感度低 | 在個人帳號新增自訂 MCP，填網址與 Token |
+| 3. 只用 Workbench 網頁介面 | 不需要 AI 對話，只想查資料 | 用瀏覽器開內網網址 |
+
+> 以下判斷依文件與官方 README 推論，未用個人帳號實測；方案 1、2 在採用前請先用一個帳號試通。
+
+### 方案 1：ChatGPT Business 工作區（建議）
+
+- 管理者在工作區開啟開發者模式，並建立一條隧道。
+- 只需在一台常駐主機執行一個 `tunnel-client`，指向 `http://127.0.0.1:18080/mcp`（做法見第五節）。
+- 每位同事在自己的 ChatGPT 加入**同一個**連接器、選同一條隧道，不必安裝任何東西。
+- 隧道屬於組織，可集中管理誰能使用。
+- DBHub 以 HTTP 執行時每個請求獨立處理，多人同時查詢沒有問題。
+- 缺點：有訂閱費用。
+
+### 方案 2：公開 HTTPS 端點 ＋ Token（個人帳號）
+
+- 以 Compose 常駐 DBHub，前面接 HTTPS 入口（例如 Cloudflare Tunnel，不必對外開放主機埠）。
+- 在 `.env` 設定 `DBHUB_AUTH_TOKEN`。可用逗號列出多把 token，**一人一把**；某人離開時只撤銷他那一把。
+- 每位同事在 ChatGPT 新增自訂 MCP 應用程式，填 `https://你的網域/mcp` 與自己的 Token。
+- 風險與前提：
+  - 資料庫的查詢入口放在公開網路上。
+  - ChatGPT 的 Token 選項是否能正確送出 Bearer token，需要實測。
+  - Plus、Pro 的自訂 MCP 連接器需開發者模式且為唯讀；免費版能否新增自訂端點尚未確認。
+  - 務必使用只讀資料庫帳號、`readonly = true`、`max_rows`、`query_timeout`，並在入口限制來源或速率。
+
+### 方案 3：Workbench 網頁介面
+
+- DBHub 內建的 Workbench 只在公司內網或 VPN 開放（例如 `http://主機:18080`），同事用瀏覽器查詢。
+- 最安全，但沒有 AI 對話。
+- 注意：DBHub 沒有內建登入，Compose 預設只綁 `127.0.0.1`；要給內網使用需自行調整對外綁定，並以防火牆或反向代理保護。
+
+### 共通注意事項
+
+- 所有人共用同一個 DBHub 與連線池；PostgreSQL 預設每個來源上限 10 條連線（`pool_max_connections`），使用者多時以 `query_timeout`、`max_rows` 避免單一大查詢拖慢其他人。
+- 所有 ChatGPT 使用同一個資料庫身分，**無法分辨是誰查的，也無法分權限**。若不同人要看不同資料，需拆成多個 `[[sources]]` 與不同的資料庫帳號，並對應不同的連接器。
+- 主機與 `tunnel-client`／HTTPS 入口掛掉會影響所有人，請確認它們開機後自動啟動。
+
+## 七、其他方式：公開 HTTPS 端點（不建議）
 
 上述方式不需要公開網路，建議優先使用。以下是直接對外開放 DBHub 的做法，風險較高：
 
@@ -115,13 +176,13 @@ ChatGPT 的自訂 MCP 連接器是在 **OpenAI 的雲端**連線，而不是在�
 3. 在 DBHub 啟動時設定 Token，例如：
 
    ```bash
-   npx -y @bytebase/dbhub@latest --config ./dbhub.toml --transport http --port 8080 --auth-token "長且隨機的字串"
+   npx -y @bytebase/dbhub@1.5.0 --config ./dbhub.toml --transport http --port 8080 --auth-token "長且隨機的字串"
    ```
 
 4. 在 ChatGPT 的設定中新增自訂 MCP 應用程式，填入端點網址，驗證方式依實際選項設定。
 5. 以唯讀查詢測試，例如請它列出資料表，確認工具可以正常呼叫。
 
-## 七、常見問題
+## 八、常見問題
 
 **Q：ChatGPT 顯示找不到或無法連線？**
 通常是網址不是公開 HTTPS、防火牆擋住、或 Token 不符。先用瀏覽器或 `curl` 從外部測試 `/healthz`。

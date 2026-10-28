@@ -2,7 +2,7 @@
 
 適用情境：在 Windows 電腦上，使用 Docker 啟動這份專案，連接已存在的 MySQL，讓瀏覽器或支援 MCP 的 AI 工具查詢資料。
 
-本文件以本專案的 Compose、Dockerfile 與 DBHub 1.4.0 原始碼為準。所有指令都在 **PowerShell** 執行；範例的路徑、資料庫、帳號與密碼要換成自己的資料。
+本文件以本專案的 Compose、Dockerfile 與 DBHub 1.5.0 原始碼為準。所有指令都在 **PowerShell** 執行；範例的路徑、資料庫、帳號與密碼要換成自己的資料。
 
 ## 1. 先用最簡單的方式理解
 
@@ -195,7 +195,7 @@ docker compose -f ./compose-dbhub.yaml up -d --build
 
 第一次會下載基礎映像、安裝套件與建置程式，需要網路連線，可能花數分鐘。完成後服務會在背景執行，可以關閉 PowerShell。
 
-`-f` 指定啟動檔，`-d` 表示背景執行，`--build` 表示先建置。`dbhub-local:1.4.0` 是這份原始碼建置的本機映像標籤。
+`-f` 指定啟動檔，`-d` 表示背景執行，`--build` 表示先建置。`dbhub-local:1.5.0` 是這份原始碼建置的本機映像標籤。
 
 ```powershell
 docker compose -f ./compose-dbhub.yaml ps
