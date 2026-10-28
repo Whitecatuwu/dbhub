@@ -2,16 +2,14 @@
 
 本文件幫你**決定用哪種方式**讓 ChatGPT 使用 DBHub。實際操作步驟請見 [tunnel-client 安裝.md](tunnel-client%20安裝.md)（第 9 節說明如何接上 DBHub）與 [Docker使用說明.md](Docker使用說明.md)。
 
-> 方案與功能名稱變動頻繁。本文整理自 2026 年 10 月的官方與第三方資料，**正式採用前請以 OpenAI 官方說明為準**：<https://help.openai.com/>。
+> 方案與功能名稱變動頻繁。本文整理自 2026 年 10 月的官方與第三方資料，**正式採用前請以 OpenAI 官方說明為準**：<https://help.openai.com/zh-hant/articles/12584461-connecting-custom-mcp-servers-in-chatgpt>。
 
 ## 一、先看結論
 
 | 項目 | 狀況 |
 |---|---|
 | **建議做法** | 用 **tunnel-client**（OpenAI 的私有通道）。DBHub 不必公開到網際網路。 |
-| ChatGPT 免費版 | 目前可以透過外掛程式 -> 新增自訂 MCP 伺服器；不行時改用其他方案。 |
-| ChatGPT Plus、Pro | 需開啟開發者模式，且自訂 MCP 連接器通常只能**唯讀**。 |
-| ChatGPT Business、Enterprise、Edu | 可用完整 MCP 功能，但需要**管理者**先在工作區開啟開發者模式。 |
+| ChatGPT | 免費版目前可以透過外掛程式 -> 新增自訂 MCP 伺服器 |
 | 本專案的 `plugin/` | 只能用在 **Claude Code**，ChatGPT 不能用。 |
 | 只想讓同事查資料、不一定要 AI | 用 DBHub 內建的網頁介面（Workbench）。 |
 
