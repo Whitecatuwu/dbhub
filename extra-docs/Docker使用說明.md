@@ -4,6 +4,8 @@
 
 本文件以本專案的 Compose、Dockerfile 與 DBHub 1.5.0 原始碼為準。所有指令都在 **PowerShell** 執行；範例的路徑、資料庫、帳號與密碼要換成自己的資料。
 
+> **Ubuntu 等 Linux 主機**：第 5 節之後的 `docker compose` 指令相同。Compose 已設定 `host.docker.internal:host-gateway`，容器可用 `host.docker.internal` 連到主機上的資料庫。差別只在 Docker 安裝（改裝 Docker Engine，見[官方說明](https://docs.docker.com/engine/install/ubuntu/)，不需要 Docker Desktop 與 WSL），以及建立檔案時用 `nano .env` 取代 `notepad .env`，檢查檔案存在用 `ls -a`。此處未在 Ubuntu 實測，請以實際輸出為準。
+
 ## 1. 先用最簡單的方式理解
 
 MySQL 像存資料的倉庫，DBHub 像協助查詢倉庫的服務員，Docker 則是裝好這位服務員與所需工具的盒子。
@@ -24,7 +26,7 @@ MCP 是 AI 工具與外部服務溝通的規則。DBHub 提供 MCP 接口，讓�
 
 ## 2. 安裝 Docker Desktop
 
-Docker 方式已包含所需的 Node.js，不需要另外安裝 Node.js 或 pnpm。
+Docker 方式已包含所需的 Node.js，不需要另外安裝任何程式執行環境。
 
 1. 開啟 [Docker Desktop Windows 官方安裝頁](https://docs.docker.com/desktop/setup/install/windows-install/)，確認系統需求並下載適合電腦架構的安裝程式。
 2. 執行安裝程式，使用 WSL 2 後端；依提示重新啟動電腦。
@@ -228,7 +230,9 @@ SELECT 1 AS ok, DATABASE() AS database_name;
 
 應看到 `ok` 是 `1`，`database_name` 是設定的資料庫。這個查詢不會新增或修改資料。
 
-### 7.3 PowerShell 測試 MCP
+### 7.3 PowerShell 測試 MCP（進階，可略過）
+
+7.1 與 7.2 都成功就代表安裝完成，這一節只在需要確認 MCP 協定本身時才做，之後接 ChatGPT 也會驗證到同樣的路徑。
 
 逐段執行，先初始化，再列工具，最後呼叫 SQL 工具。此版本支援下列舊版協定的無狀態 HTTP 請求：
 
@@ -284,21 +288,20 @@ $queryReply | ConvertTo-Json -Depth 20
 
 若回應以 `data:` 開頭，表示事件串流文字，可查看其中的 JSON，或使用支援 Streamable HTTP 的 MCP 客戶端完成同樣的驗證。
 
-## 8. 連接 AI 工具
+## 8. 連接 ChatGPT
 
-在支援 **Streamable HTTP MCP** 的客戶端新增服務：
+ChatGPT 是從 OpenAI 的雲端連線，連不到 `http://localhost:18080/mcp`。請用 OpenAI 的私有隧道（tunnel-client）轉接：
 
-| 欄位 | 值 |
-|---|---|
-| 名稱 | `dbhub`，或自行命名 |
-| 傳輸方式 | HTTP／Streamable HTTP |
-| URL | `http://localhost:18080/mcp` |
+1. 確認第 7 節的 `/healthz` 回傳 `OK`。
+2. 依 [tunnel-client 安裝.md](tunnel-client%20安裝.md) 第 9 節「方式 B：HTTP」，讓 tunnel-client 連到 `http://127.0.0.1:18080/mcp`。
+3. 在 ChatGPT 新增連接器的步驟見 [tunnel-client 安裝.md](tunnel-client%20安裝.md) 第 8 節。
+4. 連線後，先請 ChatGPT 執行 `SELECT 1 AS ok;`，再查詢業務資料。
 
-各產品的選單與設定檔格式不同，請依客戶端說明填寫。重新連線後，確認工具出現，先請 AI 執行 `SELECT 1 AS ok;`，再查詢業務資料。
+tunnel-client 必須與這個 Docker 服務在**同一台電腦**，才能用 `127.0.0.1` 連到它。
 
-這個 URL 適用於在**同一台 Windows 主機上連線的客戶端**。另一台電腦或雲端服務的 `localhost` 不會指向你的電腦；雲端連線需要另外設計可到達的網址、HTTPS 與驗證方式。
+目前服務只發布到 Windows 的 `127.0.0.1`，區域網路的其他電腦無法直接連入，這是刻意的設計：本教學沒有啟用 DBHub 的 Bearer token 驗證，保護靠「只綁本機＋私有隧道＋唯讀資料庫帳號」。**不要為了方便把埠改成對區域網路或網際網路開放。**
 
-目前服務只發布到 Windows 的 `127.0.0.1`，其他電腦無法直接透過區域網路連入。本教學沒有啟用 DBHub 的 Bearer token 驗證；如需對外提供服務，請先規劃驗證與存取範圍。
+方案選擇（單一共用主機或每人各自啟動）見 [ChatGPT連接說明.md](ChatGPT連接說明.md)。
 
 ## 9. 日常操作
 
@@ -381,6 +384,6 @@ Compose 設了 `restart: unless-stopped`，Docker 引擎啟動時通常會恢復
 - [ ] `/healthz` 回傳 `OK`，網頁可開啟。
 - [ ] MCP 工具清單可取得。
 - [ ] SQL 測試成功，回傳正確的資料庫名稱。
-- [ ] AI 客戶端連線成功，使用設定的唯讀工具。
+- [ ] ChatGPT 經 tunnel-client 連線成功，使用設定的唯讀工具。
 
 文件依據：`compose-dbhub.yaml`、`Dockerfile.dbhub`、`src/config/env.ts`、`src/server.ts` 與 `src/tools/execute-sql.ts`。其他安裝方式可查閱 [DBHub 上游專案](https://github.com/bytebase/dbhub)。本文件已核對本專案設定與原始碼；接收者仍需在自己的電腦完成第 7 節的實際驗證。
