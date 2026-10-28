@@ -228,6 +228,48 @@ Runtime API Key 留在電腦上，供 tunnel-client 使用。ChatGPT 的 MCP 驗
 
 這種方式由 tunnel-client 啟動 MCP 子程式。同一個 Tunnel ID 只能有一個使用 stdio 的活躍 tunnel-client；重新啟動前，必須先停止舊的程式。
 
+### 接 DBHub（本專案的實際用法）
+
+上面兩種方式的範例用的是通用 MCP。要接本專案的 DBHub，擇一：
+
+| | 方式 A：由 tunnel-client 啟動 DBHub（stdio） | 方式 B：連到已用 Docker 常駐的 DBHub（HTTP） |
+|---|---|---|
+| 適合 | 一個人使用、快速試用 | 多人共用、長期使用 |
+| 需要先準備 | 已安裝 **Node.js**、有 `dbhub.toml` 與 `.env` | 已依 [Docker使用說明.md](Docker使用說明.md) 啟動，`http://127.0.0.1:18080/healthz` 回傳 `OK` |
+
+**方式 A：stdio**
+
+先在 PowerShell 進入**放有 `.env` 與 `dbhub.toml` 的專案資料夾**（`.env` 中的密碼要從這裡讀取），再用 tunnel-client 的**完整路徑**執行。下面假設專案在 `C:\work\dbhub`、tunnel-client 在 `C:\Tools\tunnel-client`：
+
+```powershell
+Set-Location C:\work\dbhub
+C:\Tools\tunnel-client\tunnel-client.exe init --sample sample_mcp_stdio_local --profile dbhub-stdio --tunnel-id $env:CONTROL_PLANE_TUNNEL_ID --mcp-command "npx -y @bytebase/dbhub@1.5.0 --config ./dbhub.toml"
+C:\Tools\tunnel-client\tunnel-client.exe doctor --profile dbhub-stdio --explain
+C:\Tools\tunnel-client\tunnel-client.exe run --profile dbhub-stdio
+```
+
+- 設定檔路徑請用絕對路徑，並用 `/` 取代 `\`。
+- 版本固定為 `1.5.0`，不要改成 `@latest`。
+- Windows 的 `npx` 若在 `doctor` 階段啟動失敗，可改把命令包成 `cmd /c npx -y ...`；以 `doctor` 輸出為準。
+- 同一個 Tunnel ID 同時只能有一個 stdio 的 tunnel-client。
+
+**方式 B：HTTP（DBHub 已用 Docker 常駐）**
+
+此時 DBHub 的 MCP 端點是 `http://127.0.0.1:18080/mcp`。這個架構**不要**設定 `DBHUB_AUTH_TOKEN`，保護靠 DBHub 只綁本機、私有隧道與唯讀資料庫帳號。
+
+```powershell
+./tunnel-client.exe init --profile dbhub-http --tunnel-id $env:CONTROL_PLANE_TUNNEL_ID --mcp-server-url "http://127.0.0.1:18080/mcp" --health-listen-addr "127.0.0.1:8080"
+./tunnel-client.exe doctor --profile dbhub-http --explain
+./tunnel-client.exe run --profile dbhub-http
+```
+
+若 `doctor` 對 `http://` 位址有警告，請依輸出判斷；本專案尚未對這個組合做過長期實測。DBHub 若比 tunnel-client 晚啟動，可調整 `mcp.startup_wait_timeout`（例如 `2m`）。
+
+**共同注意**：
+
+- 隧道只保護網路路徑。DBHub 仍必須使用**唯讀資料庫帳號**，並在 TOML 設定 `readonly = true` 與 `max_rows`。
+- 在 ChatGPT 新增連接器的步驟同第 8 節；測試時改問「請列出資料庫裡有哪些資料表」。
+
 ### 如何理解 profile？
 
 Profile 就像「記住設定的便條紙」。`init` 建立設定，`doctor` 檢查，`run` 執行。已建立 profile 後，日後不必每次重新執行 `init`。秘密應保留為環境變數參照，不要寫成設定檔裡的明文 Key。
@@ -236,7 +278,7 @@ Profile 就像「記住設定的便條紙」。`init` 建立設定，`doctor` �
 
 每次使用時：
 
-1. 打開 PowerShell，進入執行檔資料夾。
+1. 打開 PowerShell，進入執行檔(tunnel-client.exe)資料夾。
 2. 依第 6 節重新設定 Runtime API Key。
 3. HTTP 模式先確認 MCP 伺服器已經啟動。
 4. 啟動之前建立的 profile：
@@ -264,10 +306,10 @@ Remove-Item Env:CONTROL_PLANE_API_KEY
 | macOS Homebrew | macOS 一般使用者 | `brew install openai/tools/tunnel-client` |
 | Linux 執行檔 | Linux 主機 | 從官方下載入口選擇 Linux 及相符架構版本 |
 | 原始碼編譯 | 需要開發或自訂版本 | 見下方說明 |
-| Docker／Compose | 希望用容器管理環境 | [Docker 部署指南](deployment/docker.md) |
-| Kubernetes | 已有 Kubernetes 環境 | [Sidecar](deployment/kubernetes-sidecar.md) 或 [獨立 Pod](deployment/kubernetes-dedicated.md) |
-| VM／systemd | Linux 上長期執行 | [systemd 部署指南](deployment/systemd-vm.md) |
-| Go SDK | 在 Go MCP 程式內直接整合 | [Go SDK 範例](../examples/go-sdk-inmemory/README.md) |
+| Docker／Compose | 希望用容器管理環境 | 見官方 [tunnel-client 專案](https://github.com/openai/tunnel-client) 的部署文件 |
+| Kubernetes | 已有 Kubernetes 環境 | 同上 |
+| VM／systemd | Linux 上長期執行 | 同上 |
+| Go SDK | 在 Go MCP 程式內直接整合 | 同上 |
 
 macOS 官方支援使用 Homebrew 安裝。直接下載的 ZIP 可能被 Gatekeeper 阻擋；遇到這種情況，請使用官方 Homebrew 安裝路徑。
 
@@ -283,7 +325,7 @@ go build -o .\bin\tunnel-client.exe ./cmd/client
 .\bin\tunnel-client.exe --version
 ```
 
-後續指令改用 `.\bin\tunnel-client.exe`。若修改管理介面，還需要依 [開發文件](development.md) 重建管理介面資產；使用未修改且已包含資產的原始碼時，可以直接編譯執行檔。
+後續指令改用 `.\bin\tunnel-client.exe`。若修改管理介面，還需要依官方專案的開發文件重建管理介面資產；使用未修改且已包含資產的原始碼時，可以直接編譯執行檔。
 
 macOS／Linux 的環境變數語法與 PowerShell 不同，例如 `export CONTROL_PLANE_API_KEY="..."`；請依平台調整，並避免把真實 Key 留在命令歷史中。
 
@@ -301,7 +343,7 @@ macOS／Linux 的環境變數語法與 PowerShell 不同，例如 `export CONTRO
 | 公司網路無法連線 | 是否允許對 OpenAI 的 outbound HTTPS、是否需要代理或企業 CA |
 | 重啟後 Key 消失 | 目前流程只設定工作階段環境變數，需重新輸入 |
 
-通道本身不需要開放外網入站埠。執行主機需要向 OpenAI 發起 HTTPS 連線，並能存取 MCP。企業代理、憑證與 mTLS 設定請參考 [部署總覽](deployment/overview.md)。
+通道本身不需要開放外網入站埠。執行主機需要向 OpenAI 發起 HTTPS 連線，並能存取 MCP。企業代理、憑證與 mTLS 設定請參考官方 [tunnel-client 專案](https://github.com/openai/tunnel-client) 的部署文件。
 
 ## 13. 完成確認
 
@@ -317,8 +359,7 @@ macOS／Linux 的環境變數語法與 PowerShell 不同，例如 `export CONTRO
 
 - [OpenAI Secure MCP Tunnel 官方指南](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 - [OpenAI 新增自訂 MCP 指南](https://developers.openai.com/api/docs/guides/custom-mcp-server)
-- [專案 README](../README.md)
-- [專案安裝與設定指南](onboarding.md)
-- [專案權限、角色與金鑰說明](permissions.md)
-- [專案疑難排解](troubleshooting.md)
+- [OpenAI tunnel-client 專案](https://github.com/openai/tunnel-client)
+- [ChatGPT連接說明.md](ChatGPT連接說明.md)：方案選擇與多人使用
+- [Docker使用說明.md](Docker使用說明.md)：讓 DBHub 常駐（方式 B 需要）
 
