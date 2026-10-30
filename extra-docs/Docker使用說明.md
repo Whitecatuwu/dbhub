@@ -114,10 +114,10 @@ notepad .env
 
 ```dotenv
 # Windows 上用來開啟 DBHub 的埠
-DBHUB_DOCKER_PORT=18080
+DOCKER_DBHUB_PORT=18080
 
 # 改成管理者提供的密碼
-DBHUB_MYSQL_PASSWORD='請替換成實際密碼'
+DOCKER_DB_MYSQL_PASSWORD='請替換成實際密碼'
 ```
 
 檔名必須是 `.env`，不是 `.env.txt`。使用 UTF-8 儲存；「另存新檔」時，檔案類型選「所有檔案」。
@@ -143,7 +143,7 @@ host = "host.docker.internal"
 port = 3307
 database = "product"
 user = "dbhub_reader"
-password = "${DBHUB_MYSQL_PASSWORD}"
+password = "${DOCKER_DB_MYSQL_PASSWORD}"
 connection_timeout = 15
 query_timeout = 30
 
@@ -162,7 +162,7 @@ max_rows = 1000
 |---|---|
 | `[[sources]]` | 一個資料庫連線 |
 | `id` | 連線的名稱，工具的 `source` 必須與它相同 |
-| `password = "${DBHUB_MYSQL_PASSWORD}"` | 從 `.env` 取密碼，保留這行文字，別貼入真實密碼 |
+| `password = "${DOCKER_DB_MYSQL_PASSWORD}"` | 從 `.env` 取密碼，保留這行文字，別貼入真實密碼 |
 | `connection_timeout = 15` | 建立連線等待上限，單位為秒 |
 | `query_timeout = 30` | 查詢逾時設定，單位為秒 |
 | `search_objects` | 搜尋資料表、欄位等物件 |

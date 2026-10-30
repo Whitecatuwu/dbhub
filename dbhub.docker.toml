@@ -13,11 +13,11 @@
 id = "docker_mysql"
 description = "Docker MySQL product database"
 type = "mysql"
-host = "host.docker.internal"
-port = 3307
-database = "product"
-user = "agent"
-password = "${DBHUB_MYSQL_PASSWORD}"
+host = "${DOCKER_DB_HOST}"
+port = "${DOCKER_DB_PORT}"
+database = "${DOCKER_DB_NAME}"
+user = "${DOCKER_DB_USER}"
+password = "${DOCKER_DB_MYSQL_PASSWORD}"
 
 [[tools]]
 name = "search_objects"
