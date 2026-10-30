@@ -15,8 +15,8 @@ description = "Docker MySQL product database"
 type = "mysql"
 host = "host.docker.internal"
 port = 3307
-database = "test"
-user = "root"
+database = "product"
+user = "agent"
 password = "${DBHUB_MYSQL_PASSWORD}"
 
 [[tools]]
@@ -26,5 +26,5 @@ source = "docker_mysql"
 [[tools]]
 name = "execute_sql"
 source = "docker_mysql"
-readonly = true
-max_rows = 1000
+readonly = true 
+max_rows = 100
