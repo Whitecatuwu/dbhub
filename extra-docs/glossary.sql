@@ -1,10 +1,15 @@
 -- ============================================================
 -- 自動控制與機電材料經銷商：商品詞彙表（MySQL 5.7 / utf8）
 --
--- 對接的商品表：products(i_products_id, vc_products_no, vc_subject_TW0, vc_shortName_TW0, i_use)
--- products 沒有品牌 / 品類欄位，所以術語表有兩種用法：
---   1. 同義詞展開：使用者輸入 → 找到標準術語 → 取出它所有別名 → 去比對品名 / 簡稱
---   2. 型號前綴：vc_products_no 的前綴 → 反推品牌 / 品類 / 系列
+-- 對接的商品 view：agent_products_view(i_products_id, vc_products_no, vc_subject_TW0, vc_shortName_TW0, i_use)
+--   （agent 沒有 products 的權限，只能讀這個 view）
+-- 商品資料的特性：
+--   * vc_products_no 是內部編號（如 N0SL115），不含型號、不含連字號
+--   * 型號寫在品名 / 簡稱裡，如「三菱無熔絲開關 BH-T 1P15A」
+-- 所以術語表有兩種用法：
+--   1. 同義詞展開：術語 → 取出它所有別名 → 去比對品名 / 簡稱
+--   2. 型號規則：model_rule.model_regex 套在「品名+簡稱」上找出同系列商品，
+--      也能用來解讀使用者輸入的型號
 --
 -- 執行方式：用 mysql 客戶端整份匯入（mysql -u... -p dbname < 本檔）。
 --           建議 agent 只給 SELECT 權限，維護術語表走另外的帳號。
@@ -58,21 +63,22 @@ CREATE TABLE glossary_alias (
   CONSTRAINT fk_alias_term FOREIGN KEY (term_id) REFERENCES glossary_term (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
--- ---------- 3. 型號規則表（用 vc_products_no 前綴反推品牌 / 品類 / 系列）----------
+-- ---------- 3. 型號規則表 ----------
+-- model_regex 套用在「去掉空白 / - / _ / . 之後」的字串上，不分大小寫。
+-- 例：品名「BH-T 1P15A」處理後是「BHT1P15A」；規則 BH[A-Z] 可命中。
+-- 用在兩個地方：輸入的型號（前面加 ^ 錨點）、品名+簡稱（不加錨點，出現在任何位置都算）。
+-- 規則要夠具體（如 NF[0-9] 而不是 NF），否則「NFB」之類的字會誤中。
 CREATE TABLE model_rule (
   id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
   brand_id     INT UNSIGNED NOT NULL,
   category_id  INT UNSIGNED NOT NULL,
-  pattern      VARCHAR(100) NOT NULL,                 -- LIKE 語法，如 'FR-D7%'、'VFD%EL%'
-  pattern_norm VARCHAR(100) CHARACTER SET utf8 COLLATE utf8_bin
-               GENERATED ALWAYS AS (
-                 LOWER(REPLACE(REPLACE(REPLACE(REPLACE(pattern, ' ', ''), '-', ''), '_', ''), '.', ''))
-               ) STORED,
+  pattern      VARCHAR(100) NOT NULL,                 -- 給人看的型號寫法，如 'FR-D7%'，僅供閱讀
+  model_regex  VARCHAR(100) NOT NULL,                 -- 實際比對用的正規式
   series       VARCHAR(100) NOT NULL,
   decode_note  VARCHAR(500) NOT NULL,                 -- 型號各段意義
   successor    VARCHAR(100) DEFAULT NULL,             -- 新舊替代（以原廠公告為準）
   PRIMARY KEY (id),
-  KEY idx_pattern_norm (pattern_norm),
+  KEY idx_brand (brand_id),
   CONSTRAINT fk_rule_brand    FOREIGN KEY (brand_id)    REFERENCES glossary_term (id),
   CONSTRAINT fk_rule_category FOREIGN KEY (category_id) REFERENCES glossary_term (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
@@ -485,55 +491,56 @@ WHERE kind = 'generic'
 -- ============================================================
 -- 範例資料：型號規則
 -- ※ decode_note 為方便 agent 理解的摘要，上線前請對照原廠型錄校對
--- ※ pattern 要對照 vc_products_no 實際寫法（有無連字號、有無空白）調整
+-- ※ model_regex 要用真實品名驗證（見檔尾查詢 F），品名寫法不同就會漏
 -- ============================================================
 CREATE TEMPORARY TABLE rule_seed (
-  brand VARCHAR(100), category VARCHAR(100), pattern VARCHAR(100),
+  brand VARCHAR(100), category VARCHAR(100), pattern VARCHAR(100), model_regex VARCHAR(100),
   series VARCHAR(100), decode_note VARCHAR(500), successor VARCHAR(100)
 ) DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 
 INSERT INTO rule_seed VALUES
-('Mitsubishi Electric','變頻器','FR-D7%','FR-D700','小型變頻器。FR-D720=三相200V級、FR-D720S=單相200V級、FR-D740=三相400V級；後段為容量','FR-D800'),
-('Mitsubishi Electric','變頻器','FR-E7%','FR-E700','小型變頻器，功能比 D700 完整；型號格式與 D700 類似','FR-E800'),
-('Mitsubishi Electric','可程式控制器','FX3U%','MELSEC FX3U','基本單元。如 FX3U-32MR/ES：32=I/O點數、MR=繼電器輸出、MT=電晶體輸出','FX5U'),
-('Mitsubishi Electric','伺服驅動器','MR-J4%','MR-J4','AC 伺服放大器。MR-J4-xxxA=通用介面、MR-J4-xxxB=SSCNET III/H 通訊型','MR-J5'),
-('Mitsubishi Electric','電磁接觸器','S-T%','S-T','電磁接觸器；後接容量級別，線圈電壓需另確認',NULL),
-('Mitsubishi Electric','熱過載繼電器','TH-T%','TH-T','熱過載繼電器，與 S-T 接觸器搭配；需確認電流設定範圍',NULL),
-('Mitsubishi Electric','無熔絲斷路器','NF%','NF','無熔絲斷路器，如 NF63-CV、NF125-CV；數字為框架容量(AF)',NULL),
-('Omron','繼電器','MY%','MY','小型電力繼電器。MY2=2組接點、MY4=4組接點；底座另購',NULL),
-('Omron','繼電器','LY%','LY','電力繼電器。LY2=2極、LY4=4極',NULL),
-('Omron','繼電器','G2R%','G2R','PCB 型電力繼電器，G2R-1=單極、G2R-2=雙極',NULL),
-('Omron','近接開關','E2E%','E2E','圓柱型電感式近接開關；型號含檢出距離、輸出型式(NPN/PNP、NO/NC)、連接方式',NULL),
-('Omron','光電開關','E3Z%','E3Z','小型光電開關；尾碼表示感測方式(對照/反射/擴散反射)與輸出型式',NULL),
-('Omron','固態繼電器','G3NA%','G3NA','固態繼電器，面板/DIN軌安裝；需確認負載類型與電流',NULL),
-('Omron','編碼器','E6B2%','E6B2','增量型旋轉編碼器，如 E6B2-CWZ6C；型號含解析度(P/R)與輸出型式',NULL),
-('Omron','計時器','H3Y%','H3Y','小型計時器（限時電驛）',NULL),
-('Omron','溫度控制器','E5CC%','E5CC','數位溫度控制器',NULL),
-('Delta Electronics','變頻器','VFD%EL%','VFD-EL','小型變頻器。如 VFD007EL21A：007=0.75kW、21=單相230V、23=三相230V、43=三相460V',NULL),
-('Delta Electronics','可程式控制器','DVP%','DVP','PLC 系列（SS/SA/SX/ES/EH 等子系列），尾碼含輸出型式',NULL),
-('Delta Electronics','人機介面','DOP-%','DOP','HMI。DOP-B 系列型號含螢幕尺寸代碼（如 B07 約 7 吋級）',NULL),
-('Delta Electronics','伺服驅動器','ASD-B2%','ASD-B2','伺服驅動器，搭配 ECMA 系列伺服馬達',NULL),
-('Delta Electronics','伺服馬達','ECMA%','ECMA','伺服馬達，搭配 ASD 系列驅動器',NULL),
-('Autonics','近接開關','PR%','PR','圓柱型近接開關。PR12-4DN：12=外徑12mm、4=檢出距離4mm、DN=DC三線NPN常開；DP=PNP常開；DN2/DP2=常閉',NULL),
-('Autonics','編碼器','E40S%','E40S','增量型旋轉編碼器，外徑40mm；型號含軸徑、解析度、輸出型式、電壓',NULL),
-('Schneider Electric','電磁接觸器','LC1D%','TeSys D','接觸器。LC1D09=9A級；尾碼為線圈電壓（M7=AC220V、B7=AC24V、BD=DC24V）',NULL),
-('Schneider Electric','熱過載繼電器','LRD%','TeSys LRD','熱過載繼電器；LRD 後的代號對應電流設定範圍，需查樣本',NULL),
-('Schneider Electric','馬達保護斷路器','GV2%','TeSys GV2','馬達保護斷路器，如 GV2ME08；後段為電流範圍代號',NULL),
-('Schneider Electric','按鈕開關','XB4%','Harmony XB4','22mm 開孔的按鈕、選擇開關、指示燈系列',NULL),
-('Siemens','電磁接觸器','3RT%','SIRIUS 3RT','接觸器系列',NULL),
-('Siemens','馬達保護斷路器','3RV%','SIRIUS 3RV','馬達保護斷路器系列',NULL),
-('Siemens','可程式控制器','6ES7%','SIMATIC S7','S7 系列 PLC 與模組的料號前綴；世代(S7-300/1200/1500)由後段碼區分',NULL),
-('Mean Well','電源供應器','LRS-%','LRS','封閉式開關電源。LRS-350-24：350=功率W、24=輸出電壓V',NULL),
-('Mean Well','電源供應器','NDR-%','NDR','DIN 軌電源，命名格式同 LRS（功率-輸出電壓）',NULL),
-('Panasonic','可程式控制器','FP0R%','FP0R','小型 PLC',NULL),
-('Fuji Electric','電磁接觸器','SC-N%','SC-N','電磁接觸器系列',NULL),
-('Fuji Electric','無熔絲斷路器','BW%','BW','無熔絲斷路器系列',NULL),
-('Shihlin Electric','無熔絲斷路器','BM%','BM','無熔絲開關系列',NULL);
+('Mitsubishi Electric','變頻器','FR-D7%','FRD7[0-9]','FR-D700','小型變頻器。FR-D720=三相200V級、FR-D720S=單相200V級、FR-D740=三相400V級；後段為容量','FR-D800'),
+('Mitsubishi Electric','變頻器','FR-E7%','FRE7[0-9]','FR-E700','小型變頻器，功能比 D700 完整；型號格式與 D700 類似','FR-E800'),
+('Mitsubishi Electric','可程式控制器','FX3U%','FX3U','MELSEC FX3U','基本單元。如 FX3U-32MR/ES：32=I/O點數、MR=繼電器輸出、MT=電晶體輸出','FX5U'),
+('Mitsubishi Electric','伺服驅動器','MR-J4%','MRJ4','MR-J4','AC 伺服放大器。MR-J4-xxxA=通用介面、MR-J4-xxxB=SSCNET III/H 通訊型','MR-J5'),
+('Mitsubishi Electric','電磁接觸器','S-T%','ST[0-9]','S-T','電磁接觸器；後接容量級別，線圈電壓需另確認',NULL),
+('Mitsubishi Electric','熱過載繼電器','TH-T%','THT[0-9]','TH-T','熱過載繼電器，與 S-T 接觸器搭配；需確認電流設定範圍',NULL),
+('Mitsubishi Electric','無熔絲斷路器','NF%','NF[0-9]','NF','NF 系列。數字為框架容量(AF)，後接系列代號（如 CV、SV、HV、HW，遮斷容量等級不同）；電流(AT)另標在品名，如「3P 50A」。以型錄為準',NULL),
+('Mitsubishi Electric','無熔絲斷路器','BH-%','BH[A-Z]','BH','小型無熔絲開關系列，如 BH-T、BH-AT、BH-TH；品名常接極數與電流，例如「BH-T 1P15A」，1P~3P 都有。以型錄為準',NULL),
+('Omron','繼電器','MY%','MY[0-9]','MY','小型電力繼電器。MY2=2組接點、MY4=4組接點；底座另購',NULL),
+('Omron','繼電器','LY%','LY[0-9]','LY','電力繼電器。LY2=2極、LY4=4極',NULL),
+('Omron','繼電器','G2R%','G2R','G2R','PCB 型電力繼電器，G2R-1=單極、G2R-2=雙極',NULL),
+('Omron','近接開關','E2E%','E2E','E2E','圓柱型電感式近接開關；型號含檢出距離、輸出型式(NPN/PNP、NO/NC)、連接方式',NULL),
+('Omron','光電開關','E3Z%','E3Z','E3Z','小型光電開關；尾碼表示感測方式(對照/反射/擴散反射)與輸出型式',NULL),
+('Omron','固態繼電器','G3NA%','G3NA','G3NA','固態繼電器，面板/DIN軌安裝；需確認負載類型與電流',NULL),
+('Omron','編碼器','E6B2%','E6B2','E6B2','增量型旋轉編碼器，如 E6B2-CWZ6C；型號含解析度(P/R)與輸出型式',NULL),
+('Omron','計時器','H3Y%','H3Y','H3Y','小型計時器（限時電驛）',NULL),
+('Omron','溫度控制器','E5CC%','E5CC','E5CC','數位溫度控制器',NULL),
+('Delta Electronics','變頻器','VFD%EL%','VFD[0-9A-Z]*EL','VFD-EL','小型變頻器。如 VFD007EL21A：007=0.75kW、21=單相230V、23=三相230V、43=三相460V',NULL),
+('Delta Electronics','可程式控制器','DVP%','DVP[0-9]','DVP','PLC 系列（SS/SA/SX/ES/EH 等子系列），尾碼含輸出型式',NULL),
+('Delta Electronics','人機介面','DOP-%','DOP[A-Z]?[0-9]','DOP','HMI。DOP-B 系列型號含螢幕尺寸代碼（如 B07 約 7 吋級）',NULL),
+('Delta Electronics','伺服驅動器','ASD-B2%','ASDB2','ASD-B2','伺服驅動器，搭配 ECMA 系列伺服馬達',NULL),
+('Delta Electronics','伺服馬達','ECMA%','ECMA','ECMA','伺服馬達，搭配 ASD 系列驅動器',NULL),
+('Autonics','近接開關','PR%','PR[0-9]','PR','圓柱型近接開關。PR12-4DN：12=外徑12mm、4=檢出距離4mm、DN=DC三線NPN常開；DP=PNP常開；DN2/DP2=常閉',NULL),
+('Autonics','編碼器','E40S%','E40S','E40S','增量型旋轉編碼器，外徑40mm；型號含軸徑、解析度、輸出型式、電壓',NULL),
+('Schneider Electric','電磁接觸器','LC1D%','LC1D','TeSys D','接觸器。LC1D09=9A級；尾碼為線圈電壓（M7=AC220V、B7=AC24V、BD=DC24V）',NULL),
+('Schneider Electric','熱過載繼電器','LRD%','LRD[0-9]','TeSys LRD','熱過載繼電器；LRD 後的代號對應電流設定範圍，需查樣本',NULL),
+('Schneider Electric','馬達保護斷路器','GV2%','GV2','TeSys GV2','馬達保護斷路器，如 GV2ME08；後段為電流範圍代號',NULL),
+('Schneider Electric','按鈕開關','XB4%','XB4','Harmony XB4','22mm 開孔的按鈕、選擇開關、指示燈系列',NULL),
+('Siemens','電磁接觸器','3RT%','3RT','SIRIUS 3RT','接觸器系列',NULL),
+('Siemens','馬達保護斷路器','3RV%','3RV','SIRIUS 3RV','馬達保護斷路器系列',NULL),
+('Siemens','可程式控制器','6ES7%','6ES7','SIMATIC S7','S7 系列 PLC 與模組的料號前綴；世代(S7-300/1200/1500)由後段碼區分',NULL),
+('Mean Well','電源供應器','LRS-%','LRS[0-9]','LRS','封閉式開關電源。LRS-350-24：350=功率W、24=輸出電壓V',NULL),
+('Mean Well','電源供應器','NDR-%','NDR[0-9]','NDR','DIN 軌電源，命名格式同 LRS（功率-輸出電壓）',NULL),
+('Panasonic','可程式控制器','FP0R%','FP0R','FP0R','小型 PLC',NULL),
+('Fuji Electric','電磁接觸器','SC-N%','SCN[0-9]','SC-N','電磁接觸器系列',NULL),
+('Fuji Electric','無熔絲斷路器','BW%','BW[0-9]','BW','無熔絲斷路器系列',NULL),
+('Shihlin Electric','無熔絲斷路器','BM%','BM[0-9]','BM','無熔絲開關系列',NULL);
 
 
-INSERT INTO model_rule (brand_id, category_id, pattern, series, decode_note, successor)
-SELECT b.id, c.id, s.pattern, s.series, s.decode_note, s.successor
+INSERT INTO model_rule (brand_id, category_id, pattern, model_regex, series, decode_note, successor)
+SELECT b.id, c.id, s.pattern, s.model_regex, s.series, s.decode_note, s.successor
 FROM rule_seed s
 JOIN glossary_term b ON b.canonical = s.brand
 JOIN glossary_term c ON c.canonical = s.category;
@@ -543,57 +550,51 @@ DROP TEMPORARY TABLE rule_seed;
 
 
 -- ============================================================
--- 查詢範例（? 為使用者輸入的參數）
+-- 查詢範例（? 為使用者輸入的參數；商品一律查 agent_products_view）
 -- ============================================================
 
 -- A. 術語查詢：精確比對，主要詞義排前面，generic 排後面
 -- SELECT term_id, canonical, term_type, scope, definition, notes, status, replaced_by, alias_kind
 -- FROM v_glossary_lookup
--- WHERE alias_norm = LOWER(REPLACE(REPLACE(REPLACE(REPLACE(?, ' ', ''), '-', ''), '_', ''), '.', ''))
+-- WHERE alias_norm = CONVERT(LOWER(REPLACE(REPLACE(REPLACE(REPLACE(?, ' ', ''), '-', ''), '_', ''), '.', '')) USING utf8) COLLATE utf8_bin
 -- ORDER BY (alias_kind = 'generic'), canonical
 -- LIMIT 8;
 
--- B. 術語查詢：精確比對查不到時的模糊備援（限制筆數）
---    輸入太短會誤中（例如 thr 會中 Three Phase），建議應用層限制輸入至少 3 個字元，或只在精確比對無結果時才用
--- SELECT DISTINCT term_id, canonical, term_type, definition
--- FROM v_glossary_lookup
--- WHERE alias_norm LIKE CONCAT('%', LOWER(REPLACE(REPLACE(REPLACE(REPLACE(?, ' ', ''), '-', ''), '_', ''), '.', '')), '%')
+-- B. 術語模糊備援（英數字至少 3 字元、含中文至少 2 字元）
+-- SELECT DISTINCT l.term_id, l.canonical, l.term_type, l.definition
+-- FROM (SELECT ? AS raw) q
+-- JOIN v_glossary_lookup l
+--   ON (CHAR_LENGTH(q.raw) >= 3 OR (CHAR_LENGTH(q.raw) >= 2 AND LENGTH(q.raw) > CHAR_LENGTH(q.raw)))
+--  AND l.alias_norm LIKE CONVERT(CONCAT('%', LOWER(REPLACE(REPLACE(REPLACE(REPLACE(q.raw, ' ', ''), '-', ''), '_', ''), '.', '')), '%') USING utf8) COLLATE utf8_bin
 -- LIMIT 5;
 
--- C. 同義詞展開：取得某術語（A 查到的 term_id）所有可比對品名的字串
---    建議由應用層取出清單，再丟給搜尋引擎；下面第二段是直接在 SQL 裡比對的寫法，
---    商品量大時會全表掃描（LIKE '%…%' 用不到索引），只適合小量或除錯
+-- C. 同義詞展開：某術語所有可比對品名的字串
 -- SELECT search_text FROM v_glossary_expand WHERE term_id = ?;
---
--- SELECT p.i_products_id, p.vc_products_no, p.vc_subject_TW0
--- FROM products p
--- WHERE p.i_use = 1
---   AND EXISTS (SELECT 1 FROM v_glossary_expand e
---               WHERE e.term_id = ?
---                 AND (p.vc_subject_TW0   LIKE CONCAT('%', e.search_text, '%')
---                   OR p.vc_shortName_TW0 LIKE CONCAT('%', e.search_text, '%')))
--- LIMIT 50;
 
--- D. 型號查詢：由型號反推品牌 / 品類 / 系列（要求含數字，避免 NFB 被當成 NF 型號）
--- SELECT b.canonical AS brand, c.canonical AS category, r.series, r.decode_note, r.successor
--- FROM model_rule r
+-- D. 型號解讀：輸入型號 → 品牌 / 品類 / 系列
+-- SELECT r.id AS rule_id, b.canonical AS brand, c.canonical AS category, r.series, r.decode_note, r.successor
+-- FROM (SELECT ? AS raw) q
+-- JOIN model_rule r
+--   ON CONVERT(LOWER(REPLACE(REPLACE(REPLACE(REPLACE(q.raw, ' ', ''), '-', ''), '_', ''), '.', '')) USING utf8) COLLATE utf8_unicode_ci
+--      REGEXP CONCAT('^', r.model_regex)
 -- JOIN glossary_term b ON b.id = r.brand_id
 -- JOIN glossary_term c ON c.id = r.category_id
--- WHERE ? REGEXP '[0-9]'
---   AND LOWER(REPLACE(REPLACE(REPLACE(REPLACE(?, ' ', ''), '-', ''), '_', ''), '.', '')) LIKE r.pattern_norm
--- ORDER BY CHAR_LENGTH(r.pattern_norm) DESC
+-- ORDER BY CHAR_LENGTH(r.model_regex) DESC
 -- LIMIT 3;
 
--- E. 型號前綴撈商品：只用前綴比對，可走 idx_products_no（前提是 pattern 寫法與品號一致）
--- SELECT p.i_products_id, p.vc_products_no, p.vc_subject_TW0
--- FROM products p
--- WHERE p.i_use = 1
---   AND p.vc_products_no LIKE (SELECT pattern FROM model_rule WHERE id = ?)
+-- E. 依型號規則撈商品：規則套在「品名+簡稱」上
+-- SELECT p.i_products_id, p.vc_products_no, p.vc_subject_TW0, p.vc_shortName_TW0
+-- FROM model_rule r
+-- JOIN agent_products_view p ON p.i_use = 1
+-- WHERE r.id = ?
+--   AND REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(p.vc_subject_TW0, ' ', p.vc_shortName_TW0), ' ', ''), '-', ''), '_', ''), '.', '') REGEXP r.model_regex
+-- ORDER BY p.vc_products_no
 -- LIMIT 50;
 
--- F. 規則覆蓋率檢查：拿真實品號驗證每條 pattern 有沒有命中，沒命中多半是品號寫法不同
--- SELECT r.id, r.series, r.pattern, COUNT(p.i_products_id) AS hit
+-- F. 規則覆蓋率檢查：用真實商品驗證每條規則命中幾筆，0 筆代表品名寫法對不上或根本沒進這類商品
+-- SELECT r.id, r.series, r.model_regex, COUNT(p.i_products_id) AS hit
 -- FROM model_rule r
--- LEFT JOIN products p ON p.i_use = 1 AND p.vc_products_no LIKE r.pattern
--- GROUP BY r.id, r.series, r.pattern
+-- LEFT JOIN agent_products_view p ON p.i_use = 1
+--  AND REPLACE(REPLACE(REPLACE(REPLACE(CONCAT(p.vc_subject_TW0, ' ', p.vc_shortName_TW0), ' ', ''), '-', ''), '_', ''), '.', '') REGEXP r.model_regex
+-- GROUP BY r.id, r.series, r.model_regex
 -- ORDER BY hit;
